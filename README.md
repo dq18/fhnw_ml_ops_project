@@ -188,9 +188,9 @@ The project uses a **champion/challenger** pattern via Hopsworks Model Registry 
 
 ```
 ┌─────────────────┐     train      ┌──────────────────┐    promote     ┌──────────────────┐
-│  Data Scientist │ ──────────────▶ │ staging (v N+1)  │ ─────────────▶ │ production (v N+1)│
-│  edits config   │                 │ (challenger)     │                │ (new champion)    │
-└─────────────────┘                 └──────────────────┘                └──────────────────┘
+│  Data Scientist │ ─────────────▶ │ staging (v N+1)  │ ────────────▶ │ production (vN+1)│
+│  edits config   │                 │ (challenger)    │               │ (new champion)   │
+└─────────────────┘                 └─────────────────┘               └──────────────────┘
                                                                           old champion → archived
 ```
 
@@ -289,13 +289,65 @@ The project uses the **offline store** for all feature retrieval. This avoids re
 
 Both Feature Groups are still created with `online_enabled=True` — the online store is populated and available if a real-time lookup path is added later.
 
+## Streamlit App
+
+The app has three tabs accessible at [http://localhost:8501](http://localhost:8501):
+
+---
+
+### Tab 1 — Single Crag
+
+Interactive prediction for one crag at a time, combining stored batch features with a live Open-Meteo weather call.
+
+**Controls:**
+- Dropdown to select any of the 14 crags
+- Static crag info shown on the left (rock type, elevation, orientation, rain/sun exposure)
+- **Predict** button fetches current weather and runs the model
+
+**On predict:**
+
+1. **Today's result** — large green/red banner (✓ CLIMBABLE / ✗ NOT climbable) with probability and decision rule
+
+2. **3-Day Forecast** — columns for tomorrow, +2 days, +3 days  
+   Each shows the probability and an at-a-glance ✓/✗ indicator, computed by blending the last 7 days of real weather with Open-Meteo's daily forecast to re-compute rolling features (rain sums, wind average, days since rain) for each future day.
+
+3. **Current Weather** — live temperature, wind speed, cloud cover, precipitation from the Open-Meteo Forecast API
+
+4. **Rolling Features** — the pre-computed batch features used by the model: rain 3d/7d sums, wind 3d average, sunshine hours, days since rain
+
+5. **Location** — mini PyDeck map centred on the selected crag, coloured green/red by today's prediction
+
+---
+
+### Tab 2 — All Crags Map
+
+Batch prediction across all 14 crags at once.
+
+- Map starts with all crags shown as blue pins
+- **Predict All Crags** button fetches the latest batch features and runs the production model on every crag
+- Map updates: **green** = climbable, **red** = not climbable (pin radius proportional to probability)
+- Summary metric: count of climbable crags out of 14
+- Results table with probability, temperature, wind, cloud, rain per crag
+
+---
+
+### Tab 3 — Model Performance
+
+Champion / challenger comparison panel for the Model Registry.
+
+- **🏆 Champion (Production)** — version, accuracy, F1 score of the currently deployed model
+- **🥊 Latest Challenger (Staging)** — metrics of the most recently trained model, plus Δ accuracy and Δ F1 vs the champion
+- **🚀 Promote to Champion** button — one click sets the challenger as the new production model and archives the old champion (writes a `model_stages.json` override to the Hopsworks `Resources` dataset; no model re-upload required)
+- **All Registered Versions** — table with emoji stage badges (🏆 Production / 🥊 Staging / 📦 Archived) and metrics for every registered version
+- **Metrics by Version** — Altair grouped bar chart comparing Accuracy and F1 across versions
+- **🔄 Refresh** button — re-fetches the model list from the registry without reloading the full page
+
 ## Limitations & Reflection
 
 - **Small dataset:** Only 14 crags near Basel — not enough for a generalizable model, but sufficient to demonstrate the MLOps pipeline.
 - **Mostly synthetic labels:** Only 1,204 of 25,858 rows are real ascent records from thecrag.com; the remaining 24,654 rows come from a calendar-based probabilistic generator. The synthetic model is independent of weather features but noisier than true observations.
 - **Open-Meteo archive lag:** The historical weather API has a ~5-day delay. We bridge this with the forecast API's `past_days` parameter.
 - **No real ground truth feedback loop:** In a production system, user-reported climbing conditions (from apps like thecrag or oblyk) would continuously improve label quality.
-- **Weather-only features:** The model doesn't consider rock moisture sensors, route difficulty, or webcam data.
 
 ## Possible Extensions
 
@@ -307,8 +359,8 @@ The assignment mentions these "Ausbaustufen" (enhancements):
 - [x] **Ground truth label from separate source** — `climb_logs` FG (real thecrag data + synthetic)
 - [x] **Containerization (Docker)** — `Dockerfile` + `src/pipelines/` scripts
 - [x] **Champion/Challenger model management** — auto-versioning + promote workflow
-- [ ] Data validation with Great Expectations
-- [ ] Hopsworks Transformation Functions for preprocessing
-- [ ] Spine Groups for point-in-time correct joins
-- [ ] Feed RT features and ground truth back into the Feature Store
-- [ ] Deploy the model in Hopsworks (KServe)
+- [ ] **Data validation with Great Expectations** — would catch schema drift and out-of-range weather values before they reach the feature store. _Low priority here_: the weather source (Open-Meteo) is reliable and the schema is fixed, but would matter at scale with multiple data providers.
+- [ ] **Hopsworks Transformation Functions for preprocessing** — moves the `ColumnTransformer` (scaling, encoding) into the Feature View so it runs server-side and is version-controlled alongside the features. _Worth adding_ if the model is deployed via KServe, since it removes the need to replicate preprocessing logic in the serving layer.
+- [ ] **Spine Groups for point-in-time correct joins** — prevents label leakage by ensuring each training row only sees feature values available at the time of the ascent. _Relevant here_: rolling weather features are computed over a sliding window, so without a spine join a row could theoretically use future weather to predict a past label. In practice the impact is small because `date` is the join key and features are daily aggregates, but it would be required for a production-grade system.
+- [ ] **Feed RT features and ground truth back into the Feature Store** — after each prediction, write the served feature vector and the eventual observed outcome (did anyone climb?) back to Hopsworks. This enables retraining on real serving data and monitoring for feature/concept drift. _High value_ once real users report conditions; currently blocked by the lack of a live ground truth signal.
+- [ ] **Deploy the model in Hopsworks (KServe)** — replace the Streamlit `joblib.load` + local `predict_proba` call with a REST endpoint served by KServe on the Hopsworks cluster. _Not needed for this project_ since the Streamlit app runs the model in-process and latency is not a concern, but would be the right path for a public API or mobile app integration.
