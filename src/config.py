@@ -38,7 +38,9 @@ FEATURE_VIEW_VERSION = 2
 
 # ── Model Registry ───────────────────────────────────────────────────────────
 MODEL_NAME = "crag_climbability_model"
-MODEL_VERSION = 2
+# MODEL_VERSION is no longer hard-coded; training auto-increments and
+# inference loads by the "production" tag.  Keep a default for backward compat.
+MODEL_VERSION = None  # None → auto-increment on save / load production tag
 MODEL_LOCAL_PATH = MODELS_DIR / "crag_classifier.joblib"
 
 # ── Historical data window ───────────────────────────────────────────────────

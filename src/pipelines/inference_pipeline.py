@@ -34,7 +34,7 @@ Path("/tmp").mkdir(exist_ok=True)
 
 from src.config import (
     FEATURE_VIEW_NAME, FEATURE_VIEW_VERSION,
-    MODEL_NAME, MODEL_VERSION,
+    MODEL_NAME,
     PREDICTIONS_DIR,
     HOPSWORKS_API_KEY, HOPSWORKS_PROJECT,
 )
@@ -58,9 +58,20 @@ def run_inference_pipeline() -> None:
     fv = fs.get_feature_view(FEATURE_VIEW_NAME, FEATURE_VIEW_VERSION)
 
     mr = project.get_model_registry()
-    model_hw = mr.get_model(name=MODEL_NAME, version=MODEL_VERSION)
+    # Load the production (champion) model; fall back to latest version.
+    models = mr.get_models(MODEL_NAME)
+    production = [m for m in models
+                  if (m.description or "").startswith("[production]")]
+    if production:
+        model_hw = max(production, key=lambda m: m.version)
+        print(f"Using production champion: v{model_hw.version}")
+    else:
+        model_hw = max(models, key=lambda m: m.version)
+        print(f"No production model found; using latest: v{model_hw.version}")
     model_dir = model_hw.download()
-    model_pipeline = joblib.load(os.path.join(model_dir, "crag_classifier.joblib"))
+    model_pipeline = joblib.load(
+        os.path.join(model_dir, "crag_classifier.joblib")
+    )
     print(f"Model loaded from: {model_dir}")
 
     # ── B: Fetch current weather (RT features) ───────────────────────────
