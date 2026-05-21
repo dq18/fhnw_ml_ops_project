@@ -22,6 +22,7 @@ RUN uv venv $VIRTUAL_ENV && uv pip install -r pyproject.toml
 COPY src/ src/
 COPY data/ data/
 COPY config.json .
+COPY model_config.json .
 # NOTE: do NOT bake .env into the image.
 # Pass secrets at runtime: docker run --env-file .env ...
 

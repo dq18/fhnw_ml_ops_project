@@ -26,6 +26,7 @@ if PROJECT_ROOT not in sys.path:
 # hsfs Kafka engine uses a hardcoded /tmp path for SSL certs.
 pathlib.Path("/tmp").mkdir(exist_ok=True)
 
+import json
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -37,7 +38,6 @@ from src.config import (
     FEATURE_VIEW_NAME,
     FEATURE_VIEW_VERSION,
     MODEL_NAME,
-    MODEL_VERSION,
     HOPSWORKS_API_KEY,
     HOPSWORKS_PROJECT,
 )
@@ -64,13 +64,34 @@ def get_hopsworks_resources():
     fs = project.get_feature_store()
     fv = fs.get_feature_view(FEATURE_VIEW_NAME, FEATURE_VIEW_VERSION)
     try:
-        fv.init_serving()  # SQL client (sqlalchemy + aiomysql); uses latest TD version
+        fv.init_serving()
     except Exception:
-        pass  # surfaced in Tab 1 if get_feature_vector fails
+        pass
+
+    # Load the production (champion) model; check overrides file then description prefix.
     mr = project.get_model_registry()
-    model_hw = mr.get_model(name=MODEL_NAME, version=MODEL_VERSION)
+    models = mr.get_models(MODEL_NAME)
+    dataset_api = project.get_dataset_api()
+    try:
+        resp = dataset_api.read_content("/Resources/model_stages.json")
+        stage_ov = json.loads(resp.content).get(MODEL_NAME, {}) if resp else {}
+    except Exception:
+        stage_ov = {}
+
+    def _prod_stage(m):
+        return stage_ov.get(str(m.version)) or (
+            "production" if (m.description or "").startswith("[production]") else None
+        )
+
+    production = [m for m in models if _prod_stage(m) == "production"]
+    if production:
+        model_hw = max(production, key=lambda m: m.version)
+    else:
+        model_hw = max(models, key=lambda m: m.version)
     model_dir = model_hw.download()
-    model_pipeline = joblib.load(os.path.join(model_dir, "crag_classifier.joblib"))
+    model_pipeline = joblib.load(
+        os.path.join(model_dir, "crag_classifier.joblib")
+    )
     return fv, model_pipeline
 
 
@@ -155,7 +176,7 @@ st.title("Crag Climbability Predictor")
 st.caption(f"Basel area · {date.today().isoformat()}")
 
 crag_df = get_crag_data()
-tab1, tab2 = st.tabs(["Single Crag", "All Crags Map"])
+tab1, tab2, tab3 = st.tabs(["Single Crag", "All Crags Map", "Model Performance"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -420,6 +441,203 @@ with tab2:
     else:
         st.info("Click **Predict All Crags** to run batch predictions and update the map.")
         st.pydeck_chart(_build_map(crag_df))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 3 — Model Performance (Champion vs. Challenger)
+# ══════════════════════════════════════════════════════════════════════════════
+with tab3:
+    hdr_col, btn_col = st.columns([0.85, 0.15])
+    with hdr_col:
+        st.subheader("Model Registry — Champion vs. Challenger")
+    with btn_col:
+        st.write("")  # vertical spacer to align button
+        if st.button("🔄 Refresh", help="Re-fetch model versions from Hopsworks"):
+            st.rerun()
+
+    st.markdown(
+        "Compare registered model versions. The **production** model (champion) "
+        "is used by the inference pipeline and this app."
+    )
+
+    try:
+        fv_unused, _ = get_hopsworks_resources()
+        # Re-login not needed — use the cached project from get_hopsworks_resources
+        project = hopsworks.login(
+            api_key_value=HOPSWORKS_API_KEY,
+            project=HOPSWORKS_PROJECT,
+            cert_folder=tempfile.gettempdir(),
+        )
+        mr = project.get_model_registry()
+        models = mr.get_models(MODEL_NAME)
+
+        # ── Stage override helpers ────────────────────────────────────────
+        _STAGES_PATH = "/Resources/model_stages.json"
+        _STAGES_DIR  = "Resources"
+        _STAGES_FILE = "model_stages.json"
+
+        def _load_stage_overrides():
+            """Read stage overrides JSON from Hopsworks Resources dataset."""
+            dataset_api = project.get_dataset_api()
+            try:
+                resp = dataset_api.read_content(_STAGES_PATH)
+                if resp is None:
+                    return {}
+                return json.loads(resp.content)
+            except Exception:
+                return {}
+
+        def _save_stage_overrides(overrides: dict):
+            """Persist stage overrides JSON to Hopsworks Resources dataset."""
+            dataset_api = project.get_dataset_api()
+            tmp_file = os.path.join(tempfile.mkdtemp(), _STAGES_FILE)
+            with open(tmp_file, "w") as f:
+                json.dump(overrides, f)
+            dataset_api.upload(tmp_file, _STAGES_DIR, overwrite=True)
+
+        def _get_stage(m, overrides=None):
+            """Return stage string, checking overrides first then description prefix."""
+            if overrides:
+                stage = overrides.get(MODEL_NAME, {}).get(str(m.version))
+                if stage:
+                    return stage
+            desc = m.description or ""
+            if desc.startswith("[production]"):
+                return "production"
+            elif desc.startswith("[staging]"):
+                return "staging"
+            elif desc.startswith("[archived]"):
+                return "archived"
+            return "untagged"
+
+        if not models:
+            st.warning("No models registered yet. Run the training pipeline first.")
+        else:
+            stage_overrides = _load_stage_overrides()
+
+            # Build comparison table
+            rows = []
+            for m in sorted(models, key=lambda x: x.version, reverse=True):
+                metrics = m.training_metrics or {}
+                stage = _get_stage(m, stage_overrides)
+                rows.append({
+                    "Version": m.version,
+                    "Stage": stage.upper(),
+                    "Accuracy": metrics.get("accuracy"),
+                    "F1 (macro)": metrics.get("f1_score"),
+                    "Description": (m.description or "")[:60],
+                })
+
+            model_df = pd.DataFrame(rows)
+
+            # Highlight champion
+            champion = model_df[model_df["Stage"] == "PRODUCTION"]
+            challenger = model_df[model_df["Stage"] == "STAGING"]
+
+            # Summary metrics
+            col_champ, col_chall = st.columns(2)
+            with col_champ:
+                st.markdown("#### 🏆 Champion (Production)")
+                if not champion.empty:
+                    c = champion.iloc[0]
+                    st.metric("Version", f"v{c['Version']}")
+                    st.metric("Accuracy", f"{c['Accuracy']:.4f}" if c['Accuracy'] else "N/A")
+                    st.metric("F1 Score", f"{c['F1 (macro)']:.4f}" if c['F1 (macro)'] else "N/A")
+                else:
+                    st.info("No champion yet. Use the **Promote to Champion** button on the right.")
+
+            def _do_promote(challenger_version: int, all_models: list):
+                """Store stage override in Hopsworks Dataset (avoids PUT/duplicate-key error)."""
+                overrides = _load_stage_overrides()
+                model_ov = overrides.setdefault(MODEL_NAME, {})
+                for m in all_models:
+                    current = _get_stage(m, overrides)
+                    if m.version == challenger_version:
+                        model_ov[str(m.version)] = "production"
+                    elif current == "production":
+                        model_ov[str(m.version)] = "archived"
+                _save_stage_overrides(overrides)
+
+            with col_chall:
+                st.markdown("#### 🥊 Latest Challenger (Staging)")
+                if not challenger.empty:
+                    ch = challenger.iloc[0]
+                    st.metric("Version", f"v{ch['Version']}")
+                    st.metric("Accuracy", f"{ch['Accuracy']:.4f}" if ch['Accuracy'] else "N/A")
+                    st.metric("F1 Score", f"{ch['F1 (macro)']:.4f}" if ch['F1 (macro)'] else "N/A")
+
+                    # Delta vs champion
+                    if not champion.empty and ch['Accuracy'] and champion.iloc[0]['Accuracy']:
+                        delta_acc = ch['Accuracy'] - champion.iloc[0]['Accuracy']
+                        delta_f1 = (ch['F1 (macro)'] or 0) - (champion.iloc[0]['F1 (macro)'] or 0)
+                        st.metric("Δ Accuracy vs Champion", f"{delta_acc:+.4f}")
+                        st.metric("Δ F1 vs Champion", f"{delta_f1:+.4f}")
+
+                    st.markdown("")
+                    if st.button(
+                        f"🚀 Promote v{ch['Version']} to Champion",
+                        type="primary",
+                        help="Sets this version to production and archives the current champion.",
+                    ):
+                        with st.spinner("Promoting…"):
+                            _do_promote(int(ch["Version"]), models)
+                        st.success(f"v{ch['Version']} is now the champion!")
+                        get_hopsworks_resources.clear()
+                        st.rerun()
+                else:
+                    st.info("No challenger. Run the training pipeline to create one.")
+
+            # Full version history
+            st.markdown("---")
+            st.markdown("#### All Registered Versions")
+            _BADGE = {
+                "PRODUCTION": "🏆 Production",
+                "STAGING":    "🥊 Staging",
+                "ARCHIVED":   "📦 Archived",
+                "UNTAGGED":   "—  Untagged",
+            }
+            display_df = model_df.copy()
+            display_df["Status"] = display_df["Stage"].map(_BADGE).fillna(display_df["Stage"])
+            display_df["Accuracy"] = display_df["Accuracy"].apply(
+                lambda v: f"{v:.4f}" if v is not None else "—"
+            )
+            display_df["F1 (macro)"] = display_df["F1 (macro)"].apply(
+                lambda v: f"{v:.4f}" if v is not None else "—"
+            )
+            st.dataframe(
+                display_df[["Status", "Version", "Accuracy", "F1 (macro)", "Description"]],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            # Bar chart comparison
+            chart_df = model_df[model_df["Accuracy"].notna()].copy()
+            if not chart_df.empty:
+                st.markdown("#### Metrics by Version")
+                import altair as alt
+                chart_df["Version"] = chart_df["Version"].apply(lambda v: f"v{v}")
+                melted = chart_df.melt(
+                    id_vars=["Version", "Stage"],
+                    value_vars=["Accuracy", "F1 (macro)"],
+                    var_name="Metric",
+                    value_name="Score",
+                )
+                chart = (
+                    alt.Chart(melted)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("Version:N", sort=None),
+                        y=alt.Y("Score:Q", scale=alt.Scale(domain=[0.5, 1.0])),
+                        color="Metric:N",
+                        column="Metric:N",
+                        tooltip=["Version", "Metric", "Score", "Stage"],
+                    )
+                    .properties(width=200, height=300)
+                )
+                st.altair_chart(chart)
+
+    except Exception as e:
+        st.error(f"Could not load model registry data: {e}")
 
 
 # ── Footer ───────────────────────────────────────────────────────────────────

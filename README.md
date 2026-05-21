@@ -170,9 +170,34 @@ These are computed using **rolling windows** over historical daily weather data:
 ## Model
 
 - **Algorithm:** `RandomForestClassifier` (scikit-learn) with 100 estimators
-- **Preprocessing:** `ColumnTransformer` — `SimpleImputer` + `OneHotEncoder` for categorical features, `SimpleImputer(median)` + `StandardScaler` for numeric
+- **Preprocessing:** `ColumnTransformer` — `OneHotEncoder` for categorical features, `StandardScaler` for numeric
 - **Train/test split:** Hopsworks-managed `fv.train_test_split(test_size=0.2)`
 - **Model performance is NOT the focus** of this project (as per assignment instructions)
+
+### Champion / Challenger Workflow
+
+The project uses a **champion/challenger** pattern via Hopsworks Model Registry tags:
+
+| Stage | Tag | Description |
+|-------|-----|-------------|
+| **Champion** | `production` | Currently deployed model — used by inference pipeline & Streamlit app |
+| **Challenger** | `staging` | Newly trained model awaiting review |
+| **Archived** | `archived` | Previously promoted models (demoted when a new champion is set) |
+
+**Workflow:**
+
+```
+┌─────────────────┐     train      ┌──────────────────┐    promote     ┌──────────────────┐
+│  Data Scientist │ ──────────────▶ │ staging (v N+1)  │ ─────────────▶ │ production (v N+1)│
+│  edits config   │                 │ (challenger)     │                │ (new champion)    │
+└─────────────────┘                 └──────────────────┘                └──────────────────┘
+                                                                          old champion → archived
+```
+
+1. **Train** — Run `python -m src.pipelines.training_pipeline`. Each run auto-increments the model version and tags it as `staging`.
+2. **Compare** — Open the Streamlit app → "Model Performance" tab to see metrics side-by-side.
+3. **Promote** — Run `python -m src.pipelines.promote_model` (or `--version N` for a specific version). This moves the current champion to `archived` and the new model to `production`.
+4. **Inference** — The inference pipeline and Streamlit app automatically load the `production`-tagged model.
 
 ## Setup & Run
 
@@ -278,9 +303,10 @@ The assignment mentions these "Ausbaustufen" (enhancements):
 
 - [x] **Multiple Feature Groups + join** — `crag_static` ⋕ `weather_daily` ⋕ `climb_logs`
 - [x] **Hopsworks-managed train/test splits** — `fv.train_test_split()`
-- [x] **Web application for inference** — Streamlit app
+- [x] **Web application for inference** — Streamlit app with model performance dashboard
 - [x] **Ground truth label from separate source** — `climb_logs` FG (real thecrag data + synthetic)
 - [x] **Containerization (Docker)** — `Dockerfile` + `src/pipelines/` scripts
+- [x] **Champion/Challenger model management** — auto-versioning + promote workflow
 - [ ] Data validation with Great Expectations
 - [ ] Hopsworks Transformation Functions for preprocessing
 - [ ] Spine Groups for point-in-time correct joins
