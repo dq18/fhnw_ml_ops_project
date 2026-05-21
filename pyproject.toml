@@ -1,0 +1,52 @@
+[project]
+name = "crag-climbability"
+version = "1.0.0"
+description = "Predict whether a climbing crag near Basel is climbable today"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    # Core ML & data
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "joblib",
+    "matplotlib",
+    "seaborn",
+    # Hopsworks Feature Store & Model Registry
+    "hopsworks",
+    "boto3",  # required by hsfs Python engine (hopsworks[python] extra fails on Windows without C++ build tools)
+    "confluent-kafka",  # required by hsfs for Feature Group inserts
+    # pyjks (required by hsfs for JKS keystore parsing) must be installed manually on Windows:
+    # uv pip install --no-deps pyjks && uv pip install pycryptodomex pyopenssl javaobj-py3
+    "pycryptodomex",
+    "pyopenssl",
+    "grpcio",
+    "grpcio-status",
+    "opensearch-py",
+    "cryptography",
+    # Open-Meteo weather API
+    "openmeteo-requests",
+    "requests-cache",
+    "retry-requests",
+    # Utilities
+    "python-dotenv",
+    # Web app
+    "streamlit",
+    "pydeck",
+    # Online feature store SQL client
+    "sqlalchemy",
+    "aiomysql",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ipykernel",
+    "jupyter",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]

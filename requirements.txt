@@ -1,0 +1,35 @@
+# Core ML & data
+pandas
+numpy
+scikit-learn
+joblib
+matplotlib
+seaborn
+
+# Hopsworks Feature Store & Model Registry
+hopsworks
+boto3  # required by hsfs Python engine
+confluent-kafka  # required by hsfs for Feature Group inserts
+# pyjks must be installed with --no-deps to skip twofish (needs C++ build tools)
+# run: uv pip install --no-deps pyjks
+pycryptodomex  # pyjks runtime dep
+pyopenssl       # pyjks runtime dep
+grpcio
+grpcio-status
+opensearch-py
+cryptography
+
+# Open-Meteo weather API
+openmeteo-requests
+requests-cache
+retry-requests
+
+# Utilities
+python-dotenv
+
+# Web app
+streamlit
+pydeck
+# Online feature store SQL client
+sqlalchemy
+aiomysql

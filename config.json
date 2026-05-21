@@ -1,0 +1,47 @@
+{
+  "_comment": "Non-secret project configuration. Secrets (API keys) go in .env only.",
+
+  "feature_groups": {
+    "crag_static": { "name": "crag_static", "version": 1 },
+    "weather_daily": { "name": "weather_daily", "version": 1 },
+    "climb_logs": { "name": "climb_logs", "version": 1 }
+  },
+
+  "feature_view": {
+    "name": "crag_climbability",
+    "version": 1
+  },
+
+  "model": {
+    "name": "crag_climbability_model",
+    "version": 1
+  },
+
+  "label_thresholds": {
+    "rain_3d_sum_max_mm": 1.0,
+    "precip_today_max_mm": 0.1,
+    "wind_3d_avg_max_kmh": 20.0,
+    "temp_min_c": 10.0,
+    "temp_max_c": 30.0,
+    "_note": "A crag is climbable (label=1) when ALL thresholds are met and the month is in the crag's climbing seasons."
+  },
+
+  "season_months": {
+    "spring": [3, 4, 5],
+    "summer": [6, 7, 8],
+    "autumn": [9, 10, 11],
+    "winter": [12, 1, 2]
+  },
+
+  "archive": {
+    "years": 5,
+    "end_offset_days": 7
+  },
+
+  "data_sources": {
+    "crags_file": "data/crags.json",
+    "climb_logs_file": "data/climb_logs.csv",
+    "weather_archive_api": "https://archive-api.open-meteo.com/v1/archive",
+    "weather_forecast_api": "https://api.open-meteo.com/v1/forecast"
+  }
+}

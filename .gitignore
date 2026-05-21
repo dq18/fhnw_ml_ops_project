@@ -1,0 +1,48 @@
+# Virtual environment
+.venv/
+
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Model artifacts
+models/*.joblib
+models/*.pkl
+
+# Predictions output
+predictions/*.csv
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/
+
+# Scripts
+scripts/
+
+# Excel temp files
+~$*.xlsx
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# openmeteo
+.openmeteo_cache.sqlite
+
+# data
+data/Aufgabenstellung_Projektarbeit_MLOps.pdf
+data/basel_crags.xlsx
+data/climb_logs_combined.xlsx
+data/climb_logs_synth.csv
+data/climb_logs_thecrag.csv
+
+# tools
+src/tools/
