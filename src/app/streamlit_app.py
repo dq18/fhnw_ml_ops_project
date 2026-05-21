@@ -41,8 +41,9 @@ from src.config import (
     HOPSWORKS_API_KEY,
     HOPSWORKS_PROJECT,
 )
-from src.weather_client import fetch_forecast_current
+from src.weather_client import fetch_forecast_current, fetch_forecast_3day
 from src.features.crag_features import prepare_crag_df
+from src.features.weather_features import add_rolling_features
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -263,6 +264,58 @@ with tab1:
             col_prob.metric("Climbability probability", f"{prob:.1%}")
             col_rule.metric("Decision rule", _rule)
 
+            # ── 3-day forecast ──────────────────────────────────────────
+            st.markdown("### 3-Day Forecast")
+            try:
+                from datetime import date as _date
+                fc_raw = fetch_forecast_3day(
+                    float(selected_crag["latitude"]),
+                    float(selected_crag["longitude"]),
+                )
+                fc_featured = add_rolling_features(
+                    fc_raw.sort_values("date").reset_index(drop=True)
+                )
+                today_d = _date.today()
+                future_rows = fc_featured[
+                    fc_featured["date"].apply(
+                        lambda d: (d if isinstance(d, _date) else d.date()) > today_d
+                    )
+                ].head(3).reset_index(drop=True)
+
+                if future_rows.empty:
+                    st.caption("No forecast data available.")
+                else:
+                    fc_cols = st.columns(len(future_rows))
+                    _RAW_WEATHER = [
+                        "precipitation_sum", "wind_speed_10m_max",
+                        "sunshine_duration", "temperature_2m_max",
+                        "temperature_2m_min", "shortwave_radiation_sum",
+                    ]
+                    _ROLLING = [
+                        "rain_3d_sum", "rain_7d_sum", "wind_3d_avg",
+                        "sun_3d_hours", "days_since_rain",
+                    ]
+                    _DAY_LABELS = ["Tomorrow", "+2 days", "+3 days"]
+                    for i, fc_row in future_rows.iterrows():
+                        base = feat_row_df.iloc[0].to_dict()
+                        for col in _RAW_WEATHER + _ROLLING:
+                            if col in fc_row.index:
+                                base[col] = fc_row[col]
+                        X_fc = pd.DataFrame([base])
+                        fc_pred, fc_prob = _predict_row(X_fc, model_pipeline)
+                        fc_date = fc_row["date"]
+                        with fc_cols[i]:
+                            st.markdown(f"**{_DAY_LABELS[i]}**  \n{fc_date}")
+                            if fc_pred == 1:
+                                st.success(f"✓ {fc_prob:.0%}")
+                            else:
+                                st.error(f"✗ {fc_prob:.0%}")
+                            rain = fc_row.get("precipitation_sum", 0) or 0
+                            wind = fc_row.get("wind_speed_10m_max", 0) or 0
+                            st.caption(f"Rain {rain:.1f} mm · Wind {wind:.1f} km/h")
+            except Exception as _e:
+                st.caption(f"Forecast unavailable: {_e}")
+
             # ── Current weather ─────────────────────────────────────────
             st.markdown("### Current Weather")
             c1, c2, c3, c4 = st.columns(4)
@@ -277,7 +330,13 @@ with tab1:
 
             def _fmt(col: str, unit: str = "") -> str:
                 v = feat_row.get(col)
-                return f"{v:.1f}{unit}" if isinstance(v, (int, float, np.floating)) else "N/A"
+                if v is None:
+                    return "N/A"
+                if isinstance(v, float) and np.isnan(v):
+                    return "N/A"
+                if isinstance(v, (int, float, np.integer, np.floating)):
+                    return f"{v:.1f}{unit}"
+                return "N/A"
 
             feat_df = pd.DataFrame(
                 {

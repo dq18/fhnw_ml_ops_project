@@ -152,3 +152,45 @@ def fetch_recent_daily(
     if "sunshine_duration" in df.columns:
         df["sunshine_duration"] = df["sunshine_duration"] / 3600.0
     return df
+
+
+def fetch_forecast_3day(
+    latitude: float,
+    longitude: float,
+) -> pd.DataFrame:
+    """
+    Fetch the past 7 days + next 3 forecast days of daily weather.
+
+    Returns the same schema as fetch_archive_daily().  The last 7 rows are
+    recent actuals (needed to seed the rolling windows); the final 3 rows are
+    forecast values for tomorrow, +2 days, and +3 days.
+    """
+    params = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "past_days": 7,
+        "forecast_days": 4,   # today + 3 future days
+        "daily": ARCHIVE_DAILY_VARIABLES,
+        "timezone": "Europe/Zurich",
+    }
+
+    responses = _client.weather_api(FORECAST_URL, params=params)
+    response = responses[0]
+
+    daily = response.Daily()
+    daily_data = {
+        "date": pd.date_range(
+            start=pd.to_datetime(daily.Time(), unit="s", utc=True),
+            end=pd.to_datetime(daily.TimeEnd(), unit="s", utc=True),
+            freq=pd.Timedelta(seconds=daily.Interval()),
+            inclusive="left",
+        )
+    }
+    for i, var in enumerate(ARCHIVE_DAILY_VARIABLES):
+        daily_data[var] = daily.Variables(i).ValuesAsNumpy()
+
+    df = pd.DataFrame(daily_data)
+    df["date"] = df["date"].dt.tz_localize(None).dt.date
+    if "sunshine_duration" in df.columns:
+        df["sunshine_duration"] = df["sunshine_duration"] / 3600.0
+    return df
